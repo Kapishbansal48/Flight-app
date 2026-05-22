@@ -1,10 +1,12 @@
+-- Drop trigger first if it exists
+DROP TRIGGER IF EXISTS enforce_cancellation_window ON bookings;
+
 -- RPC: reserve_seat — atomically marks a seat as unavailable (prevents race conditions)
 CREATE OR REPLACE FUNCTION reserve_seat(p_seat_id UUID, p_booking_id UUID)
 RETURNS BOOLEAN AS $$
 DECLARE
   v_available BOOLEAN;
 BEGIN
-  -- Lock the row for update
   SELECT is_available INTO v_available
   FROM seats
   WHERE id = p_seat_id
@@ -38,7 +40,6 @@ BEGIN
 
   SELECT departs_at INTO v_departs_at FROM flights WHERE id = v_booking.flight_id;
 
-  -- Enforce 2-hour cancellation rule at DB level
   IF v_departs_at - NOW() < INTERVAL '2 hours' THEN
     RAISE EXCEPTION 'Cancellations are not allowed within 2 hours of departure';
   END IF;
@@ -48,7 +49,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- TRIGGER: also enforce 2-hour rule on direct UPDATE (belt-and-suspenders)
+-- TRIGGER function
 CREATE OR REPLACE FUNCTION check_cancellation_window()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -64,6 +65,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Recreate trigger
 CREATE TRIGGER enforce_cancellation_window
   BEFORE UPDATE ON bookings
   FOR EACH ROW EXECUTE FUNCTION check_cancellation_window();
